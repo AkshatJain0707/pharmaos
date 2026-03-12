@@ -1,0 +1,1262 @@
+{
+  "name": "PharmaOS_WF3_Strategic_Daily_Digest_V3",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        848
+      ],
+      "id": "c0690441-65f3-49a4-b669-5de53a86ffa0",
+      "name": "Daily 8AM IST Trigger"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        1216
+      ],
+      "id": "455452f9-8156-4848-aadf-f2da3e4f9b11",
+      "name": "When Called by Other Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "'use strict';\nconst COOLDOWN_MINUTES = 30;\nconst now = new Date();\nreturn [{json: {\n  today: now.toISOString().slice(0, 10),\n  isoNow: now.toISOString(),\n  cooldownCutoff: new Date(now.getTime() - COOLDOWN_MINUTES * 60 * 1000).toISOString(),\n  cooldownMinutes: COOLDOWN_MINUTES,\n  executionMode: $execution?.mode || 'unknown',\n  workflowId: $workflow?.id || 'unknown'\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        880
+      ],
+      "id": "36e2e0ba-8f59-46a5-a2d7-ef2cdc0af200",
+      "name": "Digest Dedup Guard"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) AS recent_digests, MAX(created_at) AS last_digest_at,\n  EXTRACT(EPOCH FROM NOW() - MAX(created_at))::int AS seconds_since_last\nFROM pharmaos_audit_log WHERE event_type = 'DIGEST_GENERATED'\n  AND created_at >= '{{ $json.cooldownCutoff }}'::timestamptz;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        400,
+        880
+      ],
+      "id": "9f749c56-8a9c-4012-8c6c-cd54e62fd69d",
+      "name": "Check Last Digest Time",
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "4a9afb05-285e-4dcd-8cf6-e1248d2e29c3",
+              "leftValue": "={{ $json.recent_digests }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        608,
+        880
+      ],
+      "id": "db58045f-5106-4c10-91bd-546dc2990689",
+      "name": "IF No Recent Digest"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{json: {skipped: true, reason: 'Cooldown active', timestamp: new Date().toISOString()}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        1040
+      ],
+      "id": "3e4a2988-afeb-4d77-a940-ed15baea2c55",
+      "name": "Log Skipped Digest"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT s.id, s.source_id, s.signal_domain, s.signal_type, s.source, s.title, s.drug_name, s.entity_name, s.indication, s.sponsor, s.phase, s.status, s.moa, s.modality, s.geography, s.nct_id, s.url, s.impact_level, s.impact_score, s.priority_score, s.route_tier, s.notif_priority, s.ai_processed, s.ai_summary, s.ai_classification, s.recommended_action, s.competitor_flag, s.is_urgent, s.confidence, s.version, s.scoring_version, s.override_status, s.override_by, s.override_reason, s.score_breakdown, s.quality_score, s.fingerprint, s.asset_id, s.first_seen_at, s.last_seen_at, s.ingested_at, CASE WHEN s.version = 1 THEN 'NEW' ELSE 'UPDATE' END AS signal_status, EXTRACT(EPOCH FROM NOW() - s.first_seen_at)/3600.0 AS age_hours, a.name AS asset_name, a.strategic_priority, a.therapeutic_area, a.competitive_set, a.peak_sales_forecast, a.patent_expiry, CASE WHEN EXTRACT(EPOCH FROM NOW() - s.first_seen_at) > 3600 THEN ROUND((s.version - 1)::numeric / (EXTRACT(EPOCH FROM NOW() - s.first_seen_at)/3600.0), 4) ELSE 0 END AS signal_velocity, CASE WHEN a.patent_expiry IS NOT NULL THEN (a.patent_expiry - CURRENT_DATE) ELSE NULL END AS days_to_patent_expiry FROM signals_mesh s LEFT JOIN pharmaos_assets a ON s.asset_id = a.id WHERE s.last_seen_at >= NOW() - INTERVAL '24 hours' AND s.ai_processed = TRUE AND COALESCE(s.status, '') NOT IN ('TTL_EXPIRED','withdrawn','terminated') ORDER BY CASE s.impact_level WHEN 'HIGH' THEN 1 WHEN 'MED' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END, s.priority_score DESC NULLS LAST, s.impact_score DESC, s.last_seen_at DESC;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        -272
+      ],
+      "id": "58c3ddcd-d5e2-425d-8c41-7d6d4c8a080f",
+      "name": "Fetch 24h Enriched Signals",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT DATE(last_seen_at) AS signal_date, signal_domain, impact_level, COUNT(*) AS count, AVG(impact_score)::numeric(5,2) AS avg_score, MAX(impact_score) AS max_score, SUM(CASE WHEN competitor_flag THEN 1 ELSE 0 END) AS competitor_count, SUM(CASE WHEN version = 1 THEN 1 ELSE 0 END) AS new_signals, SUM(CASE WHEN is_urgent THEN 1 ELSE 0 END) AS urgent_count, COUNT(DISTINCT drug_name) FILTER (WHERE drug_name != '') AS unique_drugs FROM signals_mesh WHERE last_seen_at >= NOW() - INTERVAL '7 days' AND ai_processed = TRUE GROUP BY DATE(last_seen_at), signal_domain, impact_level ORDER BY signal_date DESC, signal_domain;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        -48
+      ],
+      "id": "be4ab73f-1698-402a-ac44-fa19b950c258",
+      "name": "Fetch 7-Day Domain Trends",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(drug_name, entity_name) AS drug_name, sponsor, COALESCE(indication, 'Unknown') AS indication, signal_domain, COUNT(*) AS signal_count, MAX(impact_score) AS peak_score, AVG(impact_score)::numeric(5,2) AS avg_score, MIN(first_seen_at)::date AS first_seen, STRING_AGG(DISTINCT signal_type, ', ') AS signal_types, STRING_AGG(DISTINCT source, ', ') AS sources, SUM(CASE WHEN is_urgent THEN 1 ELSE 0 END) AS urgent_count, MAX(priority_score) AS max_priority FROM signals_mesh WHERE competitor_flag = TRUE AND last_seen_at >= NOW() - INTERVAL '7 days' AND ai_processed = TRUE GROUP BY COALESCE(drug_name, entity_name), sponsor, indication, signal_domain ORDER BY peak_score DESC, signal_count DESC LIMIT 15;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        176
+      ],
+      "id": "b75119c5-b7b9-47d7-ba6b-3a8ae6cadc92",
+      "name": "Fetch Competitor Intel",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(indication, 'Unknown') AS indication, signal_domain, COUNT(*) AS total_signals, SUM(CASE WHEN impact_level = 'HIGH' THEN 1 ELSE 0 END) AS high_count, SUM(CASE WHEN impact_level = 'MED' THEN 1 ELSE 0 END) AS med_count, SUM(CASE WHEN competitor_flag THEN 1 ELSE 0 END) AS competitor_signals, AVG(impact_score)::numeric(5,2) AS avg_score, MAX(impact_score) AS max_score, COUNT(DISTINCT COALESCE(drug_name, entity_name)) AS unique_drugs, COUNT(DISTINCT sponsor) AS unique_sponsors FROM signals_mesh WHERE last_seen_at >= NOW() - INTERVAL '24 hours' AND ai_processed = TRUE GROUP BY indication, signal_domain ORDER BY high_count DESC, total_signals DESC LIMIT 15;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        400
+      ],
+      "id": "0aa79c0c-34cb-4a8a-9f84-9971d1f5adcd",
+      "name": "Fetch Indication Heatmap",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ce.id, ce.title, ce.domains, ce.signal_ids, ce.compound_risk_score, ce.trigger_pattern, ce.pattern_metadata, ce.ai_narrative, ce.recommended_actions, ce.escalation_level, ce.resolved, ce.false_positive, ce.detected_at, (SELECT STRING_AGG(DISTINCT s.drug_name, ', ') FROM signals_mesh s WHERE s.id = ANY(ce.signal_ids) AND s.drug_name != '') AS linked_drugs, (SELECT STRING_AGG(DISTINCT s.indication, ', ') FROM signals_mesh s WHERE s.id = ANY(ce.signal_ids) AND s.indication != '') AS linked_indications, (SELECT STRING_AGG(DISTINCT s.sponsor, ', ') FROM signals_mesh s WHERE s.id = ANY(ce.signal_ids) AND s.sponsor != '') AS linked_sponsors, (SELECT COUNT(*) FROM signals_mesh s WHERE s.id = ANY(ce.signal_ids)) AS linked_signal_count FROM compound_events ce WHERE ce.resolved = FALSE AND ce.false_positive = FALSE AND ce.detected_at >= NOW() - INTERVAL '72 hours' ORDER BY ce.compound_risk_score DESC, ce.detected_at DESC;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        624
+      ],
+      "id": "df3b120f-02b0-4a8e-9002-68cf7fe56db1",
+      "name": "Fetch Compound Events",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT mv.asset_id, mv.asset_name, mv.phase, mv.strategic_priority, mv.total_signals, mv.high_signals, mv.peak_score, a.therapeutic_area, a.competitive_set, a.patent_expiry, a.peak_sales_forecast, a.last_signal_at, a.modality, (SELECT COUNT(*) FROM signals_mesh s WHERE s.asset_id = mv.asset_id AND s.last_seen_at >= NOW() - INTERVAL '24 hours') AS signals_24h, (SELECT COUNT(*) FROM signals_mesh s WHERE s.asset_id = mv.asset_id AND s.last_seen_at >= NOW() - INTERVAL '24 hours' AND s.impact_level = 'HIGH') AS high_24h, (SELECT COUNT(*) FROM signals_mesh s WHERE s.asset_id = mv.asset_id AND s.last_seen_at >= NOW() - INTERVAL '24 hours' AND s.competitor_flag = TRUE) AS competitor_24h FROM mv_asset_signal_summary mv JOIN pharmaos_assets a ON mv.asset_id = a.id WHERE mv.total_signals > 0 ORDER BY mv.high_signals DESC, mv.peak_score DESC LIMIT 20;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        1056
+      ],
+      "id": "37efa405-c2e1-4442-811d-f66220b927a4",
+      "name": "Fetch Asset Portfolio",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, decision_type, asset_id, question, decision_made, decision_rationale, outcome, outcome_score, tags, made_by, made_at FROM strategy_memory WHERE made_at >= NOW() - INTERVAL '30 days' ORDER BY made_at DESC LIMIT 30;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        1408
+      ],
+      "id": "e808c7a1-bfc1-4fc0-8dbc-77e14f0ca471",
+      "name": "Fetch Strategy Memory",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT som.id, som.signal_id, som.signal_domain, som.override_action, som.override_by, som.override_reason, som.previous_level, som.new_impact_level, som.created_at, s.drug_name, s.indication, s.sponsor, s.impact_score FROM signal_overrides_mesh som JOIN signals_mesh s ON som.signal_id = s.id WHERE som.created_at >= NOW() - INTERVAL '24 hours' ORDER BY som.created_at DESC;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        1632
+      ],
+      "id": "8fc918df-7411-4f46-97e4-3e9b07693089",
+      "name": "Fetch Override History",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 'ingestion' AS metric_type, domain, source, SUM(signals_fetched) AS total_fetched, SUM(signals_new) AS total_new, SUM(signals_updated) AS total_updated, SUM(signals_deduped) AS total_deduped, SUM(errors) AS total_errors, COUNT(*) AS run_count, MAX(finished_at) AS last_run, ROUND(100.0*(1 - SUM(errors)::numeric/NULLIF(SUM(signals_fetched),0)),1) AS success_rate FROM pharmaos_ingestion_runs WHERE started_at >= NOW() - INTERVAL '24 hours' GROUP BY domain, source UNION ALL SELECT 'health', '', metric_name, metric_value::int, 0, 0, 0, 0, 1, recorded_at, 0 FROM pharmaos_system_health WHERE recorded_at >= NOW() - INTERVAL '24 hours' ORDER BY last_run DESC LIMIT 50;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        1824
+      ],
+      "id": "3e88c09c-9c6f-4687-bff5-e4f31d589c57",
+      "name": "Fetch Pipeline Health",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT service_name, state, failure_count, success_count, last_failure_at, last_success_at, opened_at, threshold, cooldown_seconds, updated_at FROM pharmaos_circuit_breaker ORDER BY CASE state WHEN 'OPEN' THEN 1 WHEN 'HALF_OPEN' THEN 2 ELSE 3 END, service_name;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        2032
+      ],
+      "id": "ff5abbe8-b118-47a4-9054-6e2be01a01e2",
+      "name": "Fetch Circuit Breaker Status",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT status, COUNT(*) AS count, MIN(created_at) AS oldest, MAX(created_at) AS newest, AVG(retry_count)::numeric(3,1) AS avg_retries, STRING_AGG(DISTINCT source_workflow, ', ') AS workflows FROM pharmaos_dead_letter_queue WHERE created_at >= NOW() - INTERVAL '48 hours' GROUP BY status ORDER BY CASE status WHEN 'PENDING' THEN 1 WHEN 'RETRYING' THEN 2 WHEN 'ABANDONED' THEN 3 ELSE 4 END;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        2240
+      ],
+      "id": "49f62166-e5e7-485a-bf39-5e43e95a4198",
+      "name": "Fetch DLQ Status",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT transformation_type, pipeline_stage, COUNT(*) AS event_count, COUNT(DISTINCT signal_id) AS unique_signals, MAX(created_at) AS latest_event FROM signal_lineage WHERE created_at >= NOW() - INTERVAL '24 hours' GROUP BY transformation_type, pipeline_stage ORDER BY event_count DESC;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        2464
+      ],
+      "id": "3bb923a5-3f0c-435e-9351-a1b4f3ac029f",
+      "name": "Fetch Signal Lineage Summary",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) FILTER (WHERE ttl_expires_at IS NOT NULL AND ttl_expires_at <= NOW() + INTERVAL '24 hours' AND ttl_expires_at > NOW()) AS expiring_24h, COUNT(*) FILTER (WHERE ttl_expires_at IS NOT NULL AND ttl_expires_at <= NOW() AND status != 'TTL_EXPIRED') AS overdue_expiry, COUNT(*) FILTER (WHERE status = 'TTL_EXPIRED' AND last_seen_at >= NOW() - INTERVAL '24 hours') AS recently_expired, COUNT(*) FILTER (WHERE ai_processed = FALSE AND ingested_at >= NOW() - INTERVAL '24 hours') AS unprocessed_24h FROM signals_mesh;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        2704
+      ],
+      "id": "b7c38ee5-e98a-43e7-ae06-1c99dd506c64",
+      "name": "Fetch Expiring Signals",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "numberInputs": 13
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        400,
+        1200
+      ],
+      "id": "09e59855-8d73-4b8a-b59e-8d741c2e4865",
+      "name": "Merge All Context"
+    },
+    {
+      "parameters": {
+        "jsCode": "// PharmaOS WF3 V3 — Deep Analytics Engine (15 sections)\n// [Code identical to earlier execution block - 400+ lines]\n// Loads all 13 data streams, computes: signal segmentation, domain analytics,\n// 7-day trends, type/source breakdowns, compound events, signal velocity,\n// PTI V3 (10-factor), overrides, pipeline health, portfolio, patent cliff,\n// strategy memory, lineage, cross-domain correlation, context strings\n'use strict';\nconst PIPELINE_VERSION = '3.0.0';\nconst safe = (v, fb = 'N/A') => (v !== null && v !== undefined && String(v).trim() !== '') ? String(v).trim() : fb;\nconst num = (v, fb = 0) => { const n = Number(v); return Number.isFinite(n) ? n : fb; };\nconst clamp = (n, lo, hi) => Math.max(lo, Math.min(n, hi));\nconst round2 = n => Math.round(n * 100) / 100;\nconst guard = $('Digest Dedup Guard').first().json;\nconst today = guard.today; const isoNow = guard.isoNow;\n\nconst signals24h = $('Fetch 24h Enriched Signals').all().map(i => i.json);\nconst trend7d = $('Fetch 7-Day Domain Trends').all().map(i => i.json);\nconst competitorIntel = $('Fetch Competitor Intel').all().map(i => i.json);\nconst heatmap = $('Fetch Indication Heatmap').all().map(i => i.json);\nconst compoundEvents = $('Fetch Compound Events').all().map(i => i.json).filter(ce => !ce.resolved && !ce.false_positive);\nconst portfolioRaw = $('Fetch Asset Portfolio').all().map(i => i.json);\nconst strategyMemory = $('Fetch Strategy Memory').all().map(i => i.json);\nconst overrides = $('Fetch Override History').all().map(i => i.json);\nconst pipelineHealth = $('Fetch Pipeline Health').all().map(i => i.json);\nconst circuitBreakers = $('Fetch Circuit Breaker Status').all().map(i => i.json);\nconst dlqStatus = $('Fetch DLQ Status').all().map(i => i.json);\nconst lineageSummary = $('Fetch Signal Lineage Summary').all().map(i => i.json);\nconst expiryData = $('Fetch Expiring Signals').first()?.json || {};\n\n// §1 Segmentation\nconst highSignals = signals24h.filter(s => String(s.impact_level).toUpperCase() === 'HIGH');\nconst medSignals = signals24h.filter(s => String(s.impact_level).toUpperCase() === 'MED');\nconst lowSignals = signals24h.filter(s => String(s.impact_level).toUpperCase() === 'LOW');\nconst newSignals = signals24h.filter(s => s.signal_status === 'NEW');\nconst updatedSignals = signals24h.filter(s => s.signal_status === 'UPDATE');\nconst competitorHits = signals24h.filter(s => s.competitor_flag);\nconst urgentSignals = signals24h.filter(s => s.is_urgent);\nconst safetySignals = signals24h.filter(s => String(s.signal_domain).toLowerCase() === 'safety');\nconst scores = signals24h.map(s => num(s.impact_score)).filter(s => s > 0);\nconst avgScore = scores.length > 0 ? round2(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;\nconst maxScore = scores.length > 0 ? Math.max(...scores) : 0;\nconst medianScore = scores.length > 0 ? (() => { const sorted = [...scores].sort((a,b)=>a-b); const mid = Math.floor(sorted.length/2); return sorted.length%2 ? sorted[mid] : round2((sorted[mid-1]+sorted[mid])/2); })() : 0;\nconst confDist = {high:0,medium:0,low:0}; signals24h.forEach(s => { const c = safe(s.confidence,'low').toLowerCase(); confDist[c] = (confDist[c]||0)+1; });\n\n// §2 Domain Analytics\nconst domainAnalytics = {};\n['ci','safety','regulatory','bd'].forEach(dom => {\n  const ds = signals24h.filter(s => safe(s.signal_domain).toLowerCase() === dom);\n  if (ds.length === 0) return;\n  const dScores = ds.map(s => num(s.impact_score)).filter(n => n > 0);\n  const drugFreq = {}; ds.forEach(s => { const d = safe(s.drug_name||s.entity_name,'Unknown'); drugFreq[d]=(drugFreq[d]||0)+1; });\n  const topDrug = Object.entries(drugFreq).sort((a,b)=>b[1]-a[1])[0]?.[0]||'N/A';\n  const indFreq = {}; ds.forEach(s => { const i = safe(s.indication,'Unknown'); indFreq[i]=(indFreq[i]||0)+1; });\n  const topIndication = Object.entries(indFreq).sort((a,b)=>b[1]-a[1])[0]?.[0]||'N/A';\n  domainAnalytics[dom] = {\n    total: ds.length, high: ds.filter(s=>String(s.impact_level).toUpperCase()==='HIGH').length,\n    med: ds.filter(s=>String(s.impact_level).toUpperCase()==='MED').length,\n    low: ds.filter(s=>String(s.impact_level).toUpperCase()==='LOW').length,\n    urgent: ds.filter(s=>s.is_urgent).length, competitor: ds.filter(s=>s.competitor_flag).length,\n    avgScore: dScores.length>0 ? round2(dScores.reduce((a,b)=>a+b,0)/dScores.length) : 0,\n    maxScore: dScores.length>0 ? Math.max(...dScores) : 0,\n    topDrug, topIndication,\n    newCount: ds.filter(s=>s.signal_status==='NEW').length,\n    updateCount: ds.filter(s=>s.signal_status==='UPDATE').length\n  };\n});\n\n// §3 Trends\nconst yesterdayDate = new Date(Date.now()-86400000).toISOString().slice(0,10);\nconst todayTotal = trend7d.filter(t=>t.signal_date===today).reduce((s,t)=>s+parseInt(t.count||0,10),0);\nconst yesterdayTotal = trend7d.filter(t=>t.signal_date===yesterdayDate).reduce((s,t)=>s+parseInt(t.count||0,10),0);\nconst trendDelta = todayTotal - yesterdayTotal;\nconst trendPct = yesterdayTotal>0 ? round2((trendDelta/yesterdayTotal)*100) : 'N/A';\nconst trendArrow = trendDelta>0 ? '📈' : trendDelta<0 ? '📉' : '➡️';\nconst weekHighCount = trend7d.filter(t=>String(t.impact_level).toUpperCase()==='HIGH').reduce((s,t)=>s+parseInt(t.count||0,10),0);\nconst dailyTotals = {}; trend7d.forEach(t => { dailyTotals[t.signal_date]=(dailyTotals[t.signal_date]||0)+parseInt(t.count||0,10); });\nconst dailyValues = Object.values(dailyTotals);\nconst avg7dVolume = dailyValues.length>0 ? round2(dailyValues.reduce((a,b)=>a+b,0)/dailyValues.length) : signals24h.length;\nconst volumeRatio = avg7dVolume>0 ? round2(signals24h.length/avg7dVolume) : 1;\n\n// §4 Breakdowns\nconst typeBreakdown = {}; signals24h.forEach(s => { const t=safe(s.signal_type,'unknown'); typeBreakdown[t]=(typeBreakdown[t]||0)+1; });\nconst typeBreakdownStr = Object.entries(typeBreakdown).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k}:${v}`).join(', ');\nconst sourceBreakdown = {}; signals24h.forEach(s => { const src=safe(s.source,'unknown'); sourceBreakdown[src]=(sourceBreakdown[src]||0)+1; });\nconst sourceBreakdownStr = Object.entries(sourceBreakdown).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k}:${v}`).join(', ');\nconst drugFreqG = {}; signals24h.forEach(s => { const d=safe(s.drug_name||s.entity_name,'Unknown'); drugFreqG[d]=(drugFreqG[d]||0)+1; });\nconst topDrugs = Object.entries(drugFreqG).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([d,c])=>`${d}(${c})`).join(', ');\n\n// §5 Compound Events\nconst executiveEscalations = compoundEvents.filter(ce=>safe(ce.escalation_level)==='EXECUTIVE').length;\nconst seniorEscalations = compoundEvents.filter(ce=>safe(ce.escalation_level)==='SENIOR').length;\nconst maxCompoundRisk = compoundEvents.length>0 ? Math.max(...compoundEvents.map(ce=>num(ce.compound_risk_score))) : 0;\n\n// §6 Signal Velocity\nconst velocitySignals = signals24h.filter(s => num(s.signal_velocity) > 0);\nconst avgVelocity = velocitySignals.length>0 ? round2(velocitySignals.reduce((a,s)=>a+num(s.signal_velocity),0)/velocitySignals.length) : 0;\nconst fastMovers = velocitySignals.filter(s=>num(s.signal_velocity)>0.5).slice(0,5).map(s=>({drug:safe(s.drug_name),indication:safe(s.indication),velocity:num(s.signal_velocity),score:num(s.impact_score)}));\n\n// §7 PTI V3 (10-factor)\nlet ptiRaw = 0;\nptiRaw += highSignals.length * 3;\nptiRaw += urgentSignals.length * 4;\nptiRaw += executiveEscalations * 12;\nptiRaw += seniorEscalations * 6;\nptiRaw += maxCompoundRisk * 2;\nptiRaw += competitorHits.length * 2;\nconst criticalTier = signals24h.filter(s=>safe(s.route_tier)==='CRITICAL').length;\nconst safetyEscTier = signals24h.filter(s=>safe(s.route_tier)==='SAFETY_ESCALATION').length;\nptiRaw += criticalTier * 8;\nptiRaw += safetyEscTier * 14;\nptiRaw += (domainAnalytics.safety?.high||0) * 5;\nptiRaw += (domainAnalytics.safety?.urgent||0) * 8;\nif (volumeRatio > 2.0) ptiRaw += 10; else if (volumeRatio > 1.5) ptiRaw += 5;\nptiRaw -= highSignals.filter(s=>safe(s.confidence).toLowerCase()==='low').length;\nptiRaw += overrides.filter(o=>['UPGRADE','REOPEN'].includes(safe(o.override_action).toUpperCase())).length * 2;\nif (circuitBreakers.filter(cb=>cb.state==='OPEN').length >= 3) ptiRaw += 5;\nptiRaw += fastMovers.length * 3;\nconst ptiDenom = Math.max(signals24h.length*4, 100);\nconst ptiScore = clamp(Math.round(ptiRaw/ptiDenom*100), 0, 100);\nlet riskLevel, riskReason, riskEmoji;\nif (ptiScore>=80) { riskLevel='CRITICAL'; riskEmoji='🔴'; riskReason=`PTI ${ptiScore}: ${highSignals.length} HIGH, ${executiveEscalations} EXEC esc, ${safetyEscTier} safety esc`; }\nelse if (ptiScore>=55) { riskLevel='ELEVATED'; riskEmoji='🟠'; riskReason=`PTI ${ptiScore}: ${highSignals.length} HIGH, ${competitorHits.length} comp, ${compoundEvents.length} CE`; }\nelse if (ptiScore>=30) { riskLevel='MODERATE'; riskEmoji='🟡'; riskReason=`PTI ${ptiScore}: Moderate activity, ${signals24h.length} total`; }\nelse { riskLevel='LOW'; riskEmoji='🟢'; riskReason=`PTI ${ptiScore}: Routine monitoring`; }\n\n// §8 Overrides\nconst overrideSummary = { total: overrides.length, upgrades: overrides.filter(o=>safe(o.override_action).toUpperCase()==='UPGRADE').length, downgrades: overrides.filter(o=>safe(o.override_action).toUpperCase()==='DOWNGRADE').length, dismissals: overrides.filter(o=>safe(o.override_action).toUpperCase()==='DISMISS').length, reopens: overrides.filter(o=>safe(o.override_action).toUpperCase()==='REOPEN').length, reclassifications: overrides.filter(o=>safe(o.override_action).toUpperCase()==='RECLASSIFY').length, analysts: [...new Set(overrides.map(o=>safe(o.override_by,'unknown')))] };\n\n// §9 Pipeline Health\nconst ingestionRuns = pipelineHealth.filter(p=>p.metric_type==='ingestion');\nconst totalIngested = ingestionRuns.reduce((s,r)=>s+num(r.total_fetched),0);\nconst totalErrors = ingestionRuns.reduce((s,r)=>s+num(r.total_errors),0);\nconst ingestionSuccessRate = totalIngested>0 ? round2((1-totalErrors/totalIngested)*100) : 100;\nconst openBreakers = circuitBreakers.filter(cb=>cb.state==='OPEN').length;\nconst halfOpenBreakers = circuitBreakers.filter(cb=>cb.state==='HALF_OPEN').length;\nconst dlqPending = dlqStatus.filter(d=>d.status==='PENDING').reduce((s,d)=>s+num(d.count),0);\nconst dlqAbandoned = dlqStatus.filter(d=>d.status==='ABANDONED').reduce((s,d)=>s+num(d.count),0);\nlet systemHealthStatus, systemHealthEmoji;\nif (openBreakers>=3||ingestionSuccessRate<80||dlqAbandoned>5) { systemHealthStatus='DEGRADED'; systemHealthEmoji='🔴'; }\nelse if (openBreakers>=1||halfOpenBreakers>=2||ingestionSuccessRate<95||dlqPending>10) { systemHealthStatus='WARNING'; systemHealthEmoji='🟡'; }\nelse { systemHealthStatus='HEALTHY'; systemHealthEmoji='🟢'; }\n\n// §10 Portfolio\nconst portfolioWatchlist = portfolioRaw.filter(a=>safe(a.strategic_priority)==='CRITICAL'||num(a.high_signals)>=3||num(a.high_24h)>=1).slice(0,12).map(a=>({id:a.asset_id,name:safe(a.asset_name),phase:safe(a.phase),priority:safe(a.strategic_priority),signals:num(a.total_signals),highSignals:num(a.high_signals),peakScore:num(a.peak_score),signals24h:num(a.signals_24h),high24h:num(a.high_24h),competitor24h:num(a.competitor_24h),therapeuticArea:safe(a.therapeutic_area),patentExpiry:a.patent_expiry||null}));\n\n// §11 Patent Cliff\nconst patentCliffAssets = {};\nsignals24h.filter(s=>s.days_to_patent_expiry!==null&&num(s.days_to_patent_expiry)<=365&&num(s.days_to_patent_expiry)>0).forEach(s=>{\n  const key=safe(s.asset_id||s.drug_name);\n  if(!patentCliffAssets[key]) patentCliffAssets[key]={drug:safe(s.drug_name),days:num(s.days_to_patent_expiry),signals:0,high:0};\n  patentCliffAssets[key].signals++; if(String(s.impact_level).toUpperCase()==='HIGH') patentCliffAssets[key].high++;\n});\n\n// §12 Strategy Memory\nconst strategyContextStr = strategyMemory.slice(0,10).map(m=>`[${safe(m.decision_type)}] ${safe(m.decision_made)} (${safe(m.made_by)}, ${m.made_at?String(m.made_at).slice(0,10):'?'})`).join('\\n') || 'No recent strategic decisions.';\n\n// §13 Lineage\nconst lineageTotals = { ingestion: lineageSummary.filter(l=>l.transformation_type==='ingestion').reduce((s,l)=>s+num(l.event_count),0), enrichment: lineageSummary.filter(l=>l.transformation_type==='enrichment').reduce((s,l)=>s+num(l.event_count),0), override: lineageSummary.filter(l=>l.transformation_type==='override').reduce((s,l)=>s+num(l.event_count),0) };\n\n// §14 Cross-Domain Correlation\nconst crossDomainDrugs = {};\nsignals24h.forEach(s => { const drug=safe(s.drug_name||s.entity_name,'Unknown'); if(drug==='Unknown') return; const dom=safe(s.signal_domain).toLowerCase(); if(!crossDomainDrugs[drug]) crossDomainDrugs[drug]=new Set(); crossDomainDrugs[drug].add(dom); });\nconst multiDomainDrugs = Object.entries(crossDomainDrugs).filter(([_,d])=>d.size>=2).map(([drug,doms])=>({drug,domains:[...doms],domainCount:doms.size})).sort((a,b)=>b.domainCount-a.domainCount).slice(0,10);\n\n// §15 Context Strings\nconst aiContextLines = highSignals.slice(0,15).map((s,i)=>{const drug=safe(s.drug_name||s.entity_name);return `${i+1}. [${safe(s.signal_domain).toUpperCase()}] ${drug} — ${safe(s.indication)} | Sponsor:${safe(s.sponsor)} | Type:${safe(s.signal_type)} | Score:${num(s.impact_score)}/10 | Route:${safe(s.route_tier)} | Conf:${safe(s.confidence)}\\n   ${safe(s.ai_summary,'No summary').slice(0,300)}\\n   Action: ${safe(s.recommended_action,'MONITOR')}`;}).join('\\n\\n');\nconst compoundContextLines = compoundEvents.slice(0,6).map((ce,i)=>`${i+1}. [${safe(ce.escalation_level)}] ${safe(ce.title)} | Pattern:${safe(ce.trigger_pattern)} | Risk:${num(ce.compound_risk_score)}/10 | Drugs:${safe(ce.linked_drugs)}`).join('\\n');\nconst competitorStr = competitorIntel.slice(0,8).map((c,i)=>`${i+1}. ${safe(c.drug_name)} (${safe(c.sponsor)}) — ${safe(c.indication)} [${safe(c.signal_domain).toUpperCase()}] | Signals:${c.signal_count} | Peak:${c.peak_score}/10`).join('\\n');\nconst heatmapStr = heatmap.slice(0,10).map(h=>`${safe(h.indication)} [${safe(h.signal_domain).toUpperCase()}]: ${h.total_signals} (H:${h.high_count} M:${h.med_count}) | Drugs:${h.unique_drugs}`).join('\\n');\nconst portfolioStr = portfolioWatchlist.slice(0,8).map((a,i)=>`${i+1}. ${a.name} [${a.phase}] ${a.priority} | 24h:${a.signals24h} (${a.high24h}H ${a.competitor24h}C) | Peak:${a.peakScore}`).join('\\n');\n\nreturn [{json:{pipelineVersion:PIPELINE_VERSION,today,isoNow,executionMode:guard.executionMode,total24h:signals24h.length,highCount:highSignals.length,medCount:medSignals.length,lowCount:lowSignals.length,newCount:newSignals.length,updatedCount:updatedSignals.length,competitorCount:competitorHits.length,urgentCount:urgentSignals.length,safetyCount:safetySignals.length,avgScore,maxScore,medianScore,confDist,domainAnalytics,trendDelta,trendPct,trendArrow,weekHighCount,avg7dVolume,volumeRatio,typeBreakdownStr,sourceBreakdownStr,topDrugs,compoundEvents,compoundEventCount:compoundEvents.length,executiveEscalations,seniorEscalations,maxCompoundRisk,avgVelocity,fastMovers,ptiScore,ptiRaw,riskLevel,riskReason,riskEmoji,overrideSummary,totalIngested,ingestionSuccessRate,openBreakers,halfOpenBreakers,dlqPending,dlqAbandoned,systemHealthStatus,systemHealthEmoji,portfolioWatchlist,patentCliffAssets:Object.values(patentCliffAssets),strategyContextStr,lineageTotals,expiringSignals24h:num(expiryData.expiring_24h),overdueExpiry:num(expiryData.overdue_expiry),recentlyExpired:num(expiryData.recently_expired),unprocessed24h:num(expiryData.unprocessed_24h),multiDomainDrugs,aiContextLines,compoundContextLines,competitorStr,heatmapStr,portfolioStr,signals24h:signals24h.slice(0,100),highSignals:highSignals.slice(0,20),competitorIntel,heatmap}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        1200
+      ],
+      "id": "a2ad053c-f67d-4194-a430-c2854c2e3172",
+      "name": "Deep Analytics Engine V3"
+    },
+    {
+      "parameters": {
+        "jsCode": "'use strict';\nconst d = $('Deep Analytics Engine V3').first().json;\nconst safe = (v,fb='N/A') => (v!==null&&v!==undefined&&String(v).trim()!=='') ? String(v).trim() : fb;\nconst trunc = (s,mx) => s.length>mx ? s.slice(0,mx)+'...(truncated)' : s;\n\nconst systemPrompt = `You are the Chief Intelligence Analyst for PharmaOS, the automated competitive intelligence platform of a global top-10 pharmaceutical company.\nYou are generating the Daily Strategic Intelligence Digest — consumed by C-Suite, VP Medical Affairs, VP Regulatory, Head of CI & BD leadership, and Portfolio Strategy Committee.\n\nSIGNAL CONTEXT:\n- Today: ${d.total24h} signals across ${Object.keys(d.domainAnalytics).length} active domains\n- PTI: ${d.ptiScore}/100 (${d.riskLevel}) — 10-factor weighted composite\n- Volume vs 7d avg: ${d.volumeRatio}x (${d.volumeRatio>1.5?'SPIKE DETECTED':'normal'})\n- Compound Events: ${d.compoundEventCount} active (${d.executiveEscalations} EXECUTIVE)\n- Avg Signal Velocity: ${d.avgVelocity} ver/h\n- AI Confidence: H:${d.confDist.high} M:${d.confDist.medium} L:${d.confDist.low}\n\nMANDATE: 1) SYNTHESIZE signals into strategic narrative with cause-effect chains 2) PRIORITIZE safety→threats→opportunities 3) CONTEXTUALIZE against strategy memory 4) PREDICT 30/60/90 day horizons 5) QUANTIFY with velocity, PTI, compound risk 6) RECOMMEND 5 actions with owners/timelines\n\nOUTPUT FORMAT (800-1000 words): 1. THREAT LEVEL ASSESSMENT 2. CRITICAL SIGNALS (top 5 with actions/owners) 3. COMPOUND EVENT ANALYSIS 4. DOMAIN INTELLIGENCE 5. COMPETITOR RADAR 6. PORTFOLIO IMPACT 7. EMERGING PATTERNS 8. STRATEGIC RECOMMENDATIONS`;\n\nconst sections = [];\nsections.push(`Date: ${d.today} | PTI: ${d.ptiScore}/100 (${d.riskLevel}) | Raw: ${d.ptiRaw}\n${d.riskEmoji} ${d.riskReason}\nTotal:${d.total24h} H:${d.highCount} M:${d.medCount} L:${d.lowCount} New:${d.newCount} Upd:${d.updatedCount} Comp:${d.competitorCount} Urg:${d.urgentCount} Safety:${d.safetyCount}\nAvg:${d.avgScore}/10 Max:${d.maxScore}/10 Median:${d.medianScore}/10\nvs Yesterday: ${d.trendArrow} ${d.trendDelta} (${d.trendPct}%) | 7d Avg:${d.avg7dVolume} | Vol:${d.volumeRatio}x | 7d HIGH:${d.weekHighCount}\nCE:${d.compoundEventCount} Vel:${d.avgVelocity} FastMovers:${d.fastMovers.length}`);\n\nif (Object.keys(d.domainAnalytics).length>0) {\n  sections.push('DOMAINS:\\n'+Object.entries(d.domainAnalytics).map(([dom,da])=>`  ${dom.toUpperCase()}: ${da.total} (H:${da.high} M:${da.med}) Urg:${da.urgent} Comp:${da.competitor} Drug:${da.topDrug} Ind:${da.topIndication}`).join('\\n'));\n}\nif (d.aiContextLines) sections.push('HIGH SIGNALS:\\n'+d.aiContextLines);\nif (d.compoundContextLines) sections.push('COMPOUND EVENTS:\\n'+d.compoundContextLines);\nif (d.fastMovers.length>0) sections.push('FAST MOVERS:\\n'+d.fastMovers.map((f,i)=>`${i+1}. ${f.drug} (${f.indication}) Vel:${f.velocity}/h Score:${f.score}/10`).join('\\n'));\nif (d.multiDomainDrugs.length>0) sections.push('CROSS-DOMAIN:\\n'+d.multiDomainDrugs.slice(0,5).map((m,i)=>`${i+1}. ${m.drug} in ${m.domainCount} domains: ${m.domains.join(', ')}`).join('\\n'));\nif (d.patentCliffAssets.length>0) sections.push('PATENT CLIFF (<365d):\\n'+d.patentCliffAssets.map((a,i)=>`${i+1}. ${a.drug} ${a.days}d to expiry | ${a.signals} sig (${a.high} HIGH)`).join('\\n'));\nif (d.competitorStr) sections.push('COMPETITORS (7d):\\n'+d.competitorStr);\nif (d.heatmapStr) sections.push('HEATMAP:\\n'+d.heatmapStr);\nif (d.portfolioStr) sections.push('PORTFOLIO:\\n'+d.portfolioStr);\nif (d.strategyContextStr!=='No recent strategic decisions.') sections.push('STRATEGY MEMORY:\\n'+trunc(d.strategyContextStr,2000));\nsections.push(`SYSTEM: ${d.systemHealthEmoji} ${d.systemHealthStatus} | Ingest:${d.ingestionSuccessRate}% | Breakers:R${d.openBreakers} Y${d.halfOpenBreakers} | DLQ:${d.dlqPending}p ${d.dlqAbandoned}a | Lineage:${d.lineageTotals.ingestion}→${d.lineageTotals.enrichment} | Expiring:${d.expiringSignals24h} Unproc:${d.unprocessed24h}`);\n\nconst userPrompt = trunc(sections.join('\\n\\n'), 15000);\nconst openrouterBody = { model:'openai/gpt-4.1', models:['openai/gpt-4.1','anthropic/claude-sonnet-4','google/gemini-2.5-pro-preview-06-05'], route:'fallback', messages:[{role:'system',content:systemPrompt},{role:'user',content:userPrompt}], temperature:0.2, top_p:0.9, max_tokens:2500 };\n\nreturn [{json:{openrouter_body:openrouterBody,prompt_meta:{system_chars:systemPrompt.length,user_chars:userPrompt.length,total_chars:systemPrompt.length+userPrompt.length,primary_model:'openai/gpt-4.1',fallback_models:['anthropic/claude-sonnet-4','google/gemini-2.5-pro-preview-06-05'],temperature:0.2,max_tokens:2500,built_at:new Date().toISOString()}}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        1200
+      ],
+      "id": "71a205ba-2496-429b-af0e-a31d523115ad",
+      "name": "Build AI Digest Prompt V3"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.openrouter_body) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1184,
+        1200
+      ],
+      "id": "72975aff-76c2-4bc8-8350-a4e749791f9c",
+      "name": "AI Strategic Digest (Fallback Chain)",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "l9l8Jz1oD7pXn8JS",
+          "name": "Openrouter2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "'use strict';\nconst aiResponse = $input.first().json;\nconst promptMeta = $('Build AI Digest Prompt V3').first().json.prompt_meta;\nlet execSummary = 'AI summary unavailable — all models in fallback chain failed.';\nlet modelUsed = 'unknown'; let tokensUsed = {prompt:0,completion:0,total:0}; let aiSuccess = false;\ntry { if (aiResponse?.choices?.[0]?.message?.content) { execSummary = aiResponse.choices[0].message.content; modelUsed = aiResponse.model||promptMeta.primary_model; tokensUsed = {prompt:aiResponse.usage?.prompt_tokens||0,completion:aiResponse.usage?.completion_tokens||0,total:aiResponse.usage?.total_tokens||0}; aiSuccess = true; } } catch(e) { execSummary = 'AI error: '+e.message; }\nif (execSummary.length>8000) execSummary = execSummary.slice(0,8000)+'\\n\\n_[Truncated]_';\nreturn [{json:{execSummary,aiSuccess,modelUsed,tokensUsed,promptMeta,validatedAt:new Date().toISOString()}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        1200
+      ],
+      "id": "1083e8eb-6df2-4200-8c1b-c9e4e16d6387",
+      "name": "Validate AI Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "'use strict';\nconst d = $('Deep Analytics Engine V3').first().json;\nconst ai = $('Validate AI Response').first().json;\nconst safe = (v,fb='N/A') => (v!==null&&v!==undefined&&String(v).trim()!=='') ? String(v).trim() : fb;\nconst num = (v,fb=0) => { const n=Number(v); return Number.isFinite(n)?n:fb; };\nconst riskColor = {CRITICAL:'#FF0000',ELEVATED:'#FF6600',MODERATE:'#FFB300',LOW:'#36A64F'}[d.riskLevel]||'#36A64F';\nconst divider = () => ({type:'divider'});\nconst MAX_BLOCKS = 48;\nconst blocks = [];\n\n// Header\nblocks.push({type:'header',text:{type:'plain_text',text:`📋 PharmaOS Strategic Digest — ${safe(d.today)}`,emoji:true}});\n\n// PTI Banner\nblocks.push({type:'section',text:{type:'mrkdwn',text:`${safe(d.riskEmoji)} *Portfolio Threat Index: ${d.ptiScore}/100 — ${safe(d.riskLevel)}*\\n${safe(d.riskReason)}\\n📊 Volume: ${d.volumeRatio}x vs 7d avg | Velocity: ${d.avgVelocity} ver/h | AI: ${ai.aiSuccess?'✅':'⚠️'} ${ai.modelUsed}`}});\n\n// Metrics Row 1\nblocks.push({type:'section',fields:[\n  {type:'mrkdwn',text:`📊 *Total*\\n${safe(d.total24h,'0')}`},\n  {type:'mrkdwn',text:`🚨 *HIGH*\\n${safe(d.highCount,'0')}`},\n  {type:'mrkdwn',text:`🟡 *MED*\\n${safe(d.medCount,'0')}`},\n  {type:'mrkdwn',text:`⬇️ *LOW*\\n${safe(d.lowCount,'0')}`},\n  {type:'mrkdwn',text:`🆕 *New*\\n${safe(d.newCount,'0')}`},\n  {type:'mrkdwn',text:`🔄 *Updated*\\n${safe(d.updatedCount,'0')}`}\n]});\n\n// Metrics Row 2\nblocks.push({type:'section',fields:[\n  {type:'mrkdwn',text:`⚠️ *Comp*\\n${safe(d.competitorCount,'0')}`},\n  {type:'mrkdwn',text:`🔴 *Urgent*\\n${safe(d.urgentCount,'0')}`},\n  {type:'mrkdwn',text:`${d.trendArrow} *Trend*\\n${d.trendDelta>0?'+':''}${d.trendDelta} (${safe(d.trendPct)}%)`},\n  {type:'mrkdwn',text:`⭐ *Avg/Max*\\n${safe(d.avgScore)}/10—${safe(d.maxScore)}/10`},\n  {type:'mrkdwn',text:`📅 *7d HIGH*\\n${safe(d.weekHighCount,'0')}`},\n  {type:'mrkdwn',text:`⚕️ *Safety*\\n${safe(d.safetyCount,'0')}`}\n]});\nblocks.push(divider());\n\n// Domain Breakdown\nif (d.domainAnalytics && Object.keys(d.domainAnalytics).length>0) {\n  const domEmoji={ci:'🔍',safety:'⚕️',regulatory:'📜',bd:'🤝'};\n  const domText = Object.entries(d.domainAnalytics).map(([dom,da])=>`${domEmoji[dom]||'📦'} *${dom.toUpperCase()}*: ${da.total} (🚨${da.high} 🟡${da.med}) Urg:${da.urgent} Comp:${da.competitor} Drug:${da.topDrug}`).join('\\n');\n  blocks.push({type:'section',text:{type:'mrkdwn',text:`📊 *Domain Breakdown*\\n\\n${domText}`}});\n  blocks.push(divider());\n}\n\n// AI Executive Summary (chunked at 2900)\nblocks.push({type:'section',text:{type:'mrkdwn',text:`🤖 *AI Strategic Executive Summary* ${ai.aiSuccess?'':'⚠️ _Fallback_'}`}});\nlet remaining = ai.execSummary;\nwhile (remaining.length>0 && blocks.length<MAX_BLOCKS-12) {\n  if (remaining.length<=2900) { blocks.push({type:'section',text:{type:'mrkdwn',text:remaining}}); break; }\n  let cut = remaining.lastIndexOf('\\n',2900);\n  if (cut<500) cut=2900;\n  blocks.push({type:'section',text:{type:'mrkdwn',text:remaining.slice(0,cut)}});\n  remaining = remaining.slice(cut);\n}\nblocks.push(divider());\n\n// Compound Events\nconst ces = d.compoundEvents||[];\nif (ces.length>0 && blocks.length<MAX_BLOCKS-8) {\n  const escEmoji={EXECUTIVE:'🔴',SENIOR:'🟠',STANDARD:'🟡',MONITOR:'⚪'};\n  const ceText = ces.slice(0,4).map((ce,i)=>`${escEmoji[safe(ce.escalation_level)]||'⚪'} *${i+1}. ${safe(ce.title)}*\\n> Pattern: \\`${safe(ce.trigger_pattern)}\\` | Risk: *${num(ce.compound_risk_score)}/10* | Drugs: ${safe(ce.linked_drugs)}`).join('\\n\\n');\n  blocks.push({type:'section',text:{type:'mrkdwn',text:`⚡ *Compound Events (${ces.length})*\\n\\n${ceText}`}});\n  blocks.push(divider());\n}\n\n// Fast Movers\nif ((d.fastMovers||[]).length>0 && blocks.length<MAX_BLOCKS-6) {\n  const fmText = d.fastMovers.slice(0,4).map((f,i)=>`${i+1}. *${f.drug}* (${f.indication}) — 🚀 ${f.velocity} ver/h | Score: ${f.score}/10`).join('\\n');\n  blocks.push({type:'section',text:{type:'mrkdwn',text:`🚀 *Fast-Moving Signals*\\n\\n${fmText}`}});\n  blocks.push(divider());\n}\n\n// Cross-Domain\nif ((d.multiDomainDrugs||[]).length>0 && blocks.length<MAX_BLOCKS-6) {\n  const cdText = d.multiDomainDrugs.slice(0,4).map((m,i)=>`${i+1}. *${m.drug}* — ${m.domainCount} domains: ${m.domains.map(d=>d.toUpperCase()).join(', ')}`).join('\\n');\n  blocks.push({type:'section',text:{type:'mrkdwn',text:`🔗 *Cross-Domain Correlations*\\n\\n${cdText}`}});\n  blocks.push(divider());\n}\n\n// HIGH Signals (top 5 with source buttons)\nconst highSigs = d.highSignals||[];\nif (highSigs.length>0 && blocks.length<MAX_BLOCKS-6) {\n  highSigs.slice(0,5).forEach((s,i) => {\n    if (blocks.length>=MAX_BLOCKS-4) return;\n    const drug=safe(s.drug_name||s.entity_name);\n    const dom=safe(s.signal_domain,'ci').toUpperCase();\n    const st=s.signal_status==='NEW'?'🆕':`🔄v${s.version||1}`;\n    const rival=s.competitor_flag?' ⚠️COMP':'';\n    const urg=s.is_urgent?' 🔴URG':'';\n    const blk = {type:'section',text:{type:'mrkdwn',text:`🚨 *${i+1}. ${drug}* — ${safe(s.indication)} [${dom}] ${st}${rival}${urg}\\n> Sponsor: *${safe(s.sponsor)}* | Score: *${num(s.impact_score)}/10* | Route: \\`${safe(s.route_tier)}\\` | Conf: ${safe(s.confidence)}\\n> ${safe(s.ai_summary,'No summary').slice(0,250)}\\n> 🎯 _${safe(s.recommended_action,'MONITOR')}_`}};\n    if (s.url) blk.accessory = {type:'button',text:{type:'plain_text',text:'🔗 Source',emoji:true},url:safe(s.url,'https://clinicaltrials.gov'),action_id:`view_high_${i}`};\n    blocks.push(blk);\n  });\n  blocks.push(divider());\n}\n\n// System Health\nblocks.push({type:'section',fields:[\n  {type:'mrkdwn',text:`${d.systemHealthEmoji} *System*\\n${d.systemHealthStatus}`},\n  {type:'mrkdwn',text:`✅ *Success*\\n${d.ingestionSuccessRate}%`},\n  {type:'mrkdwn',text:`⚡ *Breakers*\\n🔴${d.openBreakers} 🟡${d.halfOpenBreakers}`},\n  {type:'mrkdwn',text:`📁 *Lineage*\\n${d.lineageTotals.ingestion}→${d.lineageTotals.enrichment}`},\n  {type:'mrkdwn',text:`⏳ *Expiring*\\n${d.expiringSignals24h} in 24h`},\n  {type:'mrkdwn',text:`📥 *DLQ*\\n${d.dlqPending}p ${d.dlqAbandoned}a`}\n]});\n\n// Interactive Actions\nblocks.push({type:'actions',elements:[\n  {type:'button',text:{type:'plain_text',text:'✅ Acknowledge',emoji:true},style:'primary',action_id:'digest_acknowledge',value:JSON.stringify({date:d.today,pti:d.ptiScore})},\n  {type:'button',text:{type:'plain_text',text:'⬆️ Escalate C-Suite',emoji:true},style:'danger',action_id:'digest_escalate',value:JSON.stringify({date:d.today,pti:d.ptiScore,risk:d.riskLevel})},\n  {type:'button',text:{type:'plain_text',text:'📊 Dashboard',emoji:true},url:'https://pharmaos.internal/dashboard',action_id:'view_dashboard'}\n]});\nblocks.push(divider());\n\n// Footer\nblocks.push({type:'context',elements:[{type:'mrkdwn',text:`_PharmaOS V${d.pipelineVersion} | ${safe(d.isoNow)} | PTI:${d.ptiScore}/100 | ${d.total24h} sig (${d.newCount} new) | CE:${d.compoundEventCount} | AI:${ai.modelUsed} (${ai.tokensUsed.total}tok) | DLQ:${d.dlqPending}_`}]});\n\nconst finalBlocks = blocks.slice(0,50);\n\n// Thread Overflow\nconst threadMessages = [];\nif ((d.competitorIntel||[]).length>0) threadMessages.push({title:'🕵️ Full Competitor Radar (7-Day)',content:d.competitorIntel.slice(0,10).map((c,i)=>`${i+1}. *${safe(c.drug_name)}* (${safe(c.sponsor)}) — ${safe(c.indication)} [${safe(c.signal_domain).toUpperCase()}]\\n   Signals:${c.signal_count} | Peak:${c.peak_score}/10 | Avg:${c.avg_score}/10 | Urg:${c.urgent_count}\\n   Types:${safe(c.signal_types)} | Sources:${safe(c.sources)}`).join('\\n\\n')});\nif ((d.heatmap||[]).length>0) threadMessages.push({title:'🗺️ Full Indication Heatmap (24h)',content:d.heatmap.slice(0,12).map(h=>`• *${safe(h.indication)}* [${safe(h.signal_domain).toUpperCase()}]: ${h.total_signals} (🚨${h.high_count} 🟡${h.med_count}) | Drugs:${h.unique_drugs} | Sponsors:${h.unique_sponsors} | Avg:${h.avg_score}`).join('\\n')});\nif ((d.portfolioWatchlist||[]).length>0) threadMessages.push({title:'💼 Full Asset Portfolio Watchlist',content:d.portfolioWatchlist.map((a,i)=>`${i+1}. *${a.name}* [${a.phase}] ${a.priority}\\n   24h:${a.signals24h} (${a.high24h}H ${a.competitor24h}C) | Total:${a.signals} | Peak:${a.peakScore}${a.therapeuticArea?'\\n   TA:'+a.therapeuticArea:''}${a.patentExpiry?' | Patent:'+a.patentExpiry:''}`).join('\\n\\n')});\nif (d.overrideSummary&&d.overrideSummary.total>0) threadMessages.push({title:'👤 Analyst Override Activity (24h)',content:`Total:${d.overrideSummary.total} | ⬆${d.overrideSummary.upgrades} ⬇${d.overrideSummary.downgrades} 🚫${d.overrideSummary.dismissals} 🔄${d.overrideSummary.reopens}\\nAnalysts: ${d.overrideSummary.analysts.join(', ')}`});\n\nreturn [{json:{\n  attachments:[{color:riskColor,blocks:finalBlocks}],\n  text:`📋 PharmaOS Digest — ${d.today} | PTI: ${d.ptiScore}/100 (${d.riskLevel})`,\n  blockCount:finalBlocks.length,\n  threadMessages,threadCount:threadMessages.length,hasOverflow:threadMessages.length>0,\n  riskLevel:d.riskLevel,riskColor,ptiScore:d.ptiScore,highCount:d.highCount,total24h:d.total24h,today:d.today,\n  execSummary:ai.execSummary,aiSuccess:ai.aiSuccess,aiModel:ai.modelUsed,aiTokens:ai.tokensUsed,\n  ...d\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        1200
+      ],
+      "id": "5245c358-927c-414c-a8db-d4ad6c983383",
+      "name": "Build Slack Blocks V3"
+    },
+    {
+      "parameters": {
+        "jsCode": "'use strict';\nconst d = $input.first().json;\nconst channels = [];\n\nchannels.push({channel:'#pharmaos-digest',text:d.text,attachments:d.attachments,threadMessages:d.threadMessages,priority:'standard',sendThreads:true});\n\nif (d.ptiScore>=80||d.executiveEscalations>0||d.riskLevel==='CRITICAL')\n  channels.push({channel:'#pharmaos-critical',text:`🔴 CRITICAL — PTI:${d.ptiScore}/100 | ${d.highCount} HIGH | ${d.executiveEscalations} EXEC esc`,attachments:d.attachments,priority:'critical',sendThreads:false});\n\nif (['CRITICAL','ELEVATED'].includes(d.riskLevel))\n  channels.push({channel:'#pharmaos-executive',text:`${d.riskEmoji} Executive Brief — PTI:${d.ptiScore}/100 | ${d.riskLevel}`,attachments:d.attachments,priority:'executive',sendThreads:false});\n\nif (d.domainAnalytics?.safety && (d.domainAnalytics.safety.high>0||d.domainAnalytics.safety.urgent>0))\n  channels.push({channel:'#pharmaos-safety',text:`⚕️ Safety Alert — ${d.domainAnalytics.safety.high} HIGH | ${d.domainAnalytics.safety.urgent} URGENT`,attachments:null,priority:'safety',sendThreads:false});\n\nif (d.competitorCount>=3||(d.domainAnalytics?.ci?.competitor||0)>=2)\n  channels.push({channel:'#pharmaos-ci-team',text:`🔍 CI Update — ${d.competitorCount} comp signals | ${d.compoundEventCount} CE`,attachments:null,priority:'ci',sendThreads:false});\n\nif (d.systemHealthStatus!=='HEALTHY')\n  channels.push({channel:'#pharmaos-ops',text:`${d.systemHealthEmoji} System ${d.systemHealthStatus} — 🔴${d.openBreakers} breakers | ${d.dlqPending} DLQ | ${d.ingestionSuccessRate}%`,attachments:null,priority:'ops',sendThreads:false});\n\nconst shouldEmail = d.riskLevel==='CRITICAL'||d.ptiScore>=65||d.executiveEscalations>0;\n\nreturn [{json:{channels,channelCount:channels.length,shouldEmail,emailRecipients:shouldEmail?'ci-team@pharmaos.internal,exec@pharmaos.internal':'',routingMeta:{ptiScore:d.ptiScore,riskLevel:d.riskLevel,primaryChannel:'#pharmaos-digest',additionalChannels:channels.slice(1).map(c=>c.channel),emailTriggered:shouldEmail,routedAt:new Date().toISOString()},...d}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1904,
+        1200
+      ],
+      "id": "0779fdf0-09e7-4b59-ba14-88221e49d411",
+      "name": "Multi-Channel Router V3"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2160,
+        976
+      ],
+      "id": "40428bfc-61bb-4061-870a-b2c0e4c3f625",
+      "name": "Loop Over Channels"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#pharmaos-signals",
+          "mode": "name"
+        },
+        "text": "={{ $json.text }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        2384,
+        1104
+      ],
+      "id": "d6e7325c-5a8e-4e39-9de7-814b516a0f8d",
+      "name": "Send Channel Message",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "webhookId": "587eb2c7-230c-4617-ab93-2017c249d5d4",
+      "credentials": {
+        "slackApi": {
+          "id": "hNKdQkrXjpndDriq",
+          "name": "Pharmos Slack bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2bff44b1-c180-4a0c-a2f6-835991046e7a",
+              "leftValue": "={{ $json.sendThreads }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2624,
+        1104
+      ],
+      "id": "338892d0-7ae3-47f1-94d6-1384f7178c41",
+      "name": "IF Has Thread Overflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Thread overflow sender\n// Iterates through threadMessages and sends each as a threaded reply\n'use strict';\nconst parentTs = $('Send Channel Message').first().json.ts;\nconst channel = $('Send Channel Message').first().json.channel;\nconst threadMsgs = $('Loop Over Channels').first().json.threadMessages || [];\n\nif (!parentTs || threadMsgs.length === 0) return [{json: {threadsSkipped: true}}];\n\n// Return thread payloads for downstream Slack node\nreturn threadMsgs.map(tm => ({json: {\n  channel, thread_ts: parentTs,\n  text: `*${tm.title}*\\n\\n${tm.content}`\n}}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2864,
+        1008
+      ],
+      "id": "4da469df-3e34-4fc3-a4d0-0ee611b2ccc0",
+      "name": "Build Thread Payloads"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#pharmaos-signals",
+          "mode": "name"
+        },
+        "text": "={{ $json.text }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        3104,
+        1008
+      ],
+      "id": "9d3116ae-a025-4ac7-863f-f83361132b8f",
+      "name": "Send Thread Reply",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "webhookId": "477faed2-402f-4763-9db3-631222091e49",
+      "credentials": {
+        "slackApi": {
+          "id": "hNKdQkrXjpndDriq",
+          "name": "Pharmos Slack bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Persist digest run metrics + audit log\nDO $$\nDECLARE\n  _digest_id UUID;\nBEGIN\n  -- Audit log entry\n  INSERT INTO pharmaos_audit_log (event_type, event_data, created_at)\n  VALUES ('DIGEST_GENERATED', '{{ JSON.stringify({\n    pti: $json.ptiScore, risk: $json.riskLevel,\n    total: $json.total24h, high: $json.highCount,\n    compound_events: $json.compoundEventCount,\n    channels: $json.channelCount,\n    ai_model: $json.aiModel, ai_success: $json.aiSuccess,\n    ai_tokens: $json.aiTokens?.total || 0,\n    pipeline_version: $json.pipelineVersion\n  }).replace(/'/g, \"''\") }}'::jsonb, NOW())\n  RETURNING id INTO _digest_id;\n\n  -- System health metrics\n  INSERT INTO pharmaos_system_health (metric_name, metric_value, recorded_at)\n  VALUES\n    ('digest_pti_score', '{{ $json.ptiScore }}', NOW()),\n    ('digest_total_signals', '{{ $json.total24h }}', NOW()),\n    ('digest_high_count', '{{ $json.highCount }}', NOW()),\n    ('digest_compound_events', '{{ $json.compoundEventCount }}', NOW()),\n    ('digest_channels_sent', '{{ $json.channelCount }}', NOW()),\n    ('digest_ai_tokens', '{{ $json.aiTokens?.total || 0 }}', NOW()),\n    ('digest_ingestion_success_rate', '{{ $json.ingestionSuccessRate }}', NOW()),\n    ('digest_open_breakers', '{{ $json.openBreakers }}', NOW()),\n    ('digest_dlq_pending', '{{ $json.dlqPending }}', NOW()),\n    ('digest_block_count', '{{ $json.blockCount }}', NOW());\nEND $$;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2384,
+        1488
+      ],
+      "id": "16f3a016-6d51-4069-94c4-56456415a482",
+      "name": "Persist Digest Metrics",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT refresh_pharmaos_views();",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2624,
+        1488
+      ],
+      "id": "22291baf-cee5-4def-a87b-48c11b1b577d",
+      "name": "Refresh Materialized Views",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "postgres": {
+          "id": "Z5ua9zhW6VAkLy2e",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "6492134d-1b19-4dc8-98eb-0f1964cfeebc",
+              "leftValue": "={{ $json.shouldEmail }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2384,
+        1360
+      ],
+      "id": "90873e36-585c-4402-ba53-b44e23fda9d7",
+      "name": "IF Should Email"
+    },
+    {
+      "parameters": {
+        "jsCode": "'use strict';\nconst d = $input.first().json;\nconst html = `<!DOCTYPE html><html><head><style>\nbody{font-family:-apple-system,sans-serif;margin:0;padding:20px;background:#f5f5f5}\n.container{max-width:680px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.1)}\n.header{background:${d.riskColor};color:#fff;padding:20px 24px}\n.header h1{margin:0;font-size:18px}\n.header p{margin:4px 0 0;opacity:0.9;font-size:14px}\n.body{padding:24px}\n.metric{display:inline-block;padding:8px 16px;margin:4px;background:#f0f4f8;border-radius:6px;font-size:13px}\n.metric strong{color:#1a1a2e}\n.summary{background:#fafbfc;border-left:4px solid ${d.riskColor};padding:16px;margin:16px 0;font-size:14px;line-height:1.6}\n.footer{background:#f5f5f5;padding:16px 24px;font-size:12px;color:#666}\n</style></head><body>\n<div class=\"container\">\n  <div class=\"header\">\n    <h1>${d.riskEmoji} PharmaOS Strategic Digest — ${d.today}</h1>\n    <p>Portfolio Threat Index: ${d.ptiScore}/100 (${d.riskLevel}) | ${d.total24h} signals</p>\n  </div>\n  <div class=\"body\">\n    <div class=\"metric\"><strong>HIGH:</strong> ${d.highCount}</div>\n    <div class=\"metric\"><strong>MED:</strong> ${d.medCount}</div>\n    <div class=\"metric\"><strong>Competitor:</strong> ${d.competitorCount}</div>\n    <div class=\"metric\"><strong>Urgent:</strong> ${d.urgentCount}</div>\n    <div class=\"metric\"><strong>Compound Events:</strong> ${d.compoundEventCount}</div>\n    <div class=\"metric\"><strong>AI Model:</strong> ${d.aiModel}</div>\n    <div class=\"summary\">${(d.execSummary||'').replace(/\\n/g,'<br>')}</div>\n  </div>\n  <div class=\"footer\">PharmaOS V${d.pipelineVersion} | Generated ${d.isoNow} | ${d.channelCount} Slack channels | AI: ${d.aiTokens?.total||0} tokens</div>\n</div>\n</body></html>`;\nreturn [{json:{html,subject:`${d.riskEmoji} PharmaOS Digest ${d.today} — PTI ${d.ptiScore}/100 (${d.riskLevel})`,recipients:d.emailRecipients}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2624,
+        1328
+      ],
+      "id": "67c184ce-ea8a-4c3b-9247-1829f1c7ac37",
+      "name": "Build Email HTML"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Ensure Multi-Channel Router V3 always returns channels array\nconst data = $input.first().json;\nreturn [{\n  json: {\n    ...data,\n    channels: Array.isArray(data.channels) ? data.channels : [],\n    channelCount: data.channels?.length || 0\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2112,
+        1200
+      ],
+      "id": "ba8eab3c-303f-4dca-a334-15abd619aa35",
+      "name": "Ensure Channels Array"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily 8AM IST Trigger": {
+      "main": [
+        [
+          {
+            "node": "Digest Dedup Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Called by Other Workflow": {
+      "main": [
+        [
+          {
+            "node": "Digest Dedup Guard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Digest Dedup Guard": {
+      "main": [
+        [
+          {
+            "node": "Check Last Digest Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Last Digest Time": {
+      "main": [
+        [
+          {
+            "node": "IF No Recent Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF No Recent Digest": {
+      "main": [
+        [
+          {
+            "node": "Fetch 24h Enriched Signals",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch 7-Day Domain Trends",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Competitor Intel",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Indication Heatmap",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Compound Events",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Asset Portfolio",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Strategy Memory",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Override History",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Pipeline Health",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Circuit Breaker Status",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch DLQ Status",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Signal Lineage Summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Expiring Signals",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Skipped Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch 24h Enriched Signals": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch 7-Day Domain Trends": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Fetch Competitor Intel": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Fetch Indication Heatmap": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Fetch Compound Events": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Fetch Asset Portfolio": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 5
+          }
+        ]
+      ]
+    },
+    "Fetch Strategy Memory": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 6
+          }
+        ]
+      ]
+    },
+    "Fetch Override History": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 7
+          }
+        ]
+      ]
+    },
+    "Fetch Pipeline Health": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 8
+          }
+        ]
+      ]
+    },
+    "Fetch Circuit Breaker Status": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 9
+          }
+        ]
+      ]
+    },
+    "Fetch DLQ Status": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 10
+          }
+        ]
+      ]
+    },
+    "Fetch Signal Lineage Summary": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 11
+          }
+        ]
+      ]
+    },
+    "Fetch Expiring Signals": {
+      "main": [
+        [
+          {
+            "node": "Merge All Context",
+            "type": "main",
+            "index": 12
+          }
+        ]
+      ]
+    },
+    "Merge All Context": {
+      "main": [
+        [
+          {
+            "node": "Deep Analytics Engine V3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deep Analytics Engine V3": {
+      "main": [
+        [
+          {
+            "node": "Build AI Digest Prompt V3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Digest Prompt V3": {
+      "main": [
+        [
+          {
+            "node": "AI Strategic Digest (Fallback Chain)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Strategic Digest (Fallback Chain)": {
+      "main": [
+        [
+          {
+            "node": "Validate AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate AI Response": {
+      "main": [
+        [
+          {
+            "node": "Build Slack Blocks V3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Slack Blocks V3": {
+      "main": [
+        [
+          {
+            "node": "Multi-Channel Router V3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Multi-Channel Router V3": {
+      "main": [
+        [
+          {
+            "node": "Persist Digest Metrics",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Should Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Ensure Channels Array",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Channels": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Send Channel Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Channel Message": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Channels",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Has Thread Overflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Has Thread Overflow": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build Thread Payloads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Thread Payloads": {
+      "main": [
+        [
+          {
+            "node": "Send Thread Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Digest Metrics": {
+      "main": [
+        [
+          {
+            "node": "Refresh Materialized Views",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Should Email": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build Email HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Channels Array": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email HTML": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "02c8b653-6969-442b-87b8-fbed67af827a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8474b881f758c6fd5765ecefb8dfd3b879be2a9e4812023a323306f15f1b7d69"
+  },
+  "id": "Sn18xvWWV2l_2UwywAl7s",
+  "tags": [
+    {
+      "updatedAt": "2026-03-05T07:36:55.680Z",
+      "createdAt": "2026-03-05T07:36:55.680Z",
+      "id": "4Oo0XQF4DCzFO3wB",
+      "name": "PharmaOS"
+    },
+    {
+      "updatedAt": "2026-03-10T11:15:24.601Z",
+      "createdAt": "2026-03-10T11:15:24.601Z",
+      "id": "AHDvoWrNpy1BHrVY",
+      "name": "WF3"
+    },
+    {
+      "updatedAt": "2026-03-10T11:15:24.563Z",
+      "createdAt": "2026-03-10T11:15:24.563Z",
+      "id": "FZCEo6RxqHLgRx9g",
+      "name": "digest"
+    },
+    {
+      "updatedAt": "2026-03-10T11:15:24.562Z",
+      "createdAt": "2026-03-10T11:15:24.562Z",
+      "id": "ZoMEyIEiW610l0Z4",
+      "name": "v3"
+    }
+  ]
+}
